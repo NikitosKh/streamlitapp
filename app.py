@@ -27,6 +27,7 @@ def save_indices(indices):
     with open('saved_indices.json', 'w') as f:
         json.dump(indices, f, indent=4)
 
+@st.cache_data(show_spinner=False)
 def fetch_intraday_data(symbol, interval='5m', period='1d'):
     try:
         ticker = yf.Ticker(symbol)
@@ -39,6 +40,7 @@ def fetch_intraday_data(symbol, interval='5m', period='1d'):
         st.error(f"Error fetching data for {symbol}: {e}")
         return None
 
+@st.cache_data(show_spinner=False)
 def fetch_daily_data(symbol, start_date=None, end_date=None):
     try:
         ticker = yf.Ticker(symbol)
@@ -67,9 +69,11 @@ def normalize_weights(weights_dict):
         return weights_dict
     return {k: v / total_weight for k, v in weights_dict.items()}
 
+@st.cache_data(show_spinner=False)
 def fetch_benchmark_intraday_data(symbol='^GSPC', interval='5m', period='1d'):
     return fetch_intraday_data(symbol, interval, period)
 
+@st.cache_data(show_spinner=False)
 def fetch_benchmark_daily_data(symbol='^GSPC', start_date=None, end_date=None):
     return fetch_daily_data(symbol, start_date, end_date)
 
@@ -169,23 +173,28 @@ elif app_mode == "View All Indices":
         start_date = st.sidebar.date_input("Start Date", datetime(2024, 10, 1))
         end_date = st.sidebar.date_input("End Date", datetime.today())
         benchmark_symbol = '^GSPC'  # S&P 500
+
+        # Fetch and cache benchmark data
         benchmark_intraday_data = fetch_benchmark_intraday_data(symbol=benchmark_symbol)
         if benchmark_intraday_data is not None:
             benchmark_intraday_returns = calculate_returns(benchmark_intraday_data, date_column='Datetime')
         else:
             st.error("Failed to fetch intraday benchmark data.")
             benchmark_intraday_returns = None
+
         benchmark_daily_data = fetch_benchmark_daily_data(symbol=benchmark_symbol, start_date=start_date, end_date=end_date)
         if benchmark_daily_data is not None:
             benchmark_daily_returns = calculate_returns(benchmark_daily_data, date_column='Date')
         else:
             st.error("Failed to fetch daily benchmark data.")
             benchmark_daily_returns = None
+
         for index_name, details in saved_indices.items():
             st.subheader(f"Index: {index_name}")
             weights = details['stocks']
             symbols = list(weights.keys())
             weight_values = list(weights.values())
+
             # Fetch intraday data for each stock
             intraday_data_frames = []
             for symbol in symbols:
@@ -194,6 +203,7 @@ elif app_mode == "View All Indices":
                     intraday_data_frames.append(data.rename(columns={'Close': symbol}))
                 else:
                     st.error(f"No intraday data found for {symbol}.")
+
             daily_data_frames = []
             for symbol in symbols:
                 data = fetch_daily_data(symbol, start_date=start_date, end_date=end_date)
@@ -201,6 +211,8 @@ elif app_mode == "View All Indices":
                     daily_data_frames.append(data.rename(columns={'Close': symbol}))
                 else:
                     st.error(f"No daily data found for {symbol}.")
+
+            # Intraday Analysis
             if intraday_data_frames:
                 st.markdown("### Intraday Analysis")
                 merged_intraday_df = intraday_data_frames[0]
@@ -374,6 +386,8 @@ elif app_mode == "View All Indices":
                     st.plotly_chart(fig5, use_container_width=True)
             else:
                 st.warning(f"No intraday data available for index '{index_name}'.")
+
+            # Daily Analysis
             if daily_data_frames:
                 st.markdown("### Daily Analysis (From October 1, 2024)")
                 merged_daily_df = daily_data_frames[0]
@@ -565,7 +579,9 @@ elif app_mode == "View All Indices":
                     )
             else:
                 st.warning(f"No daily data available for index '{index_name}'.")
+
             st.markdown("---")
+
         with st.expander("View Individual Indices Data"):
             for index_name, details in saved_indices.items():
                 st.subheader(f"Index: {index_name}")
@@ -603,8 +619,6 @@ elif app_mode == "View All Indices":
                 beta_adjusted_residuals = residuals * beta
                 cumulative_residuals = (1 + beta_adjusted_residuals).cumprod()
                 ewm_beta_adj_residuals = beta_adjusted_residuals.ewm(span=20).mean()
-                ewm_index_returns = aligned_index_returns.ewm(span=20).mean()
-                ewm_benchmark_returns = aligned_benchmark_returns.ewm(span=20).mean() if benchmark_daily_returns is not None else pd.Series()
                 detailed_df = pd.DataFrame({
                     'Residuals': residuals,
                     'Beta-Adjusted Residuals': beta_adjusted_residuals,
@@ -622,17 +636,21 @@ elif app_mode == "Summary":
         start_date = st.sidebar.date_input("Start Date", datetime(2024, 10, 1))
         end_date = st.sidebar.date_input("End Date", datetime.today())
         benchmark_symbol = '^GSPC'  # S&P 500
+
+        # Fetch and cache benchmark daily data
         benchmark_daily_data = fetch_benchmark_daily_data(symbol=benchmark_symbol, start_date=start_date, end_date=end_date)
         if benchmark_daily_data is not None:
             benchmark_daily_returns = calculate_returns(benchmark_daily_data, date_column='Date')
         else:
             st.error("Failed to fetch daily benchmark data.")
             benchmark_daily_returns = None
+
         for index_name, details in saved_indices.items():
             st.subheader(f"Index: {index_name}")
             weights = details['stocks']
             symbols = list(weights.keys())
             weight_values = list(weights.values())
+
             daily_data_frames = []
             for symbol in symbols:
                 data = fetch_daily_data(symbol, start_date=start_date, end_date=end_date)
@@ -640,6 +658,7 @@ elif app_mode == "Summary":
                     daily_data_frames.append(data.rename(columns={'Close': symbol}))
                 else:
                     st.error(f"No daily data found for {symbol}.")
+
             if daily_data_frames:
                 merged_daily_df = daily_data_frames[0]
                 for df in daily_data_frames[1:]:
