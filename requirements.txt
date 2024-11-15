@@ -1,0 +1,7 @@
+streamlit
+streamlit-autorefresh
+yfinance
+pandas
+plotly
+numpy
+scikit-learn
