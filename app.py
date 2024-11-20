@@ -107,7 +107,7 @@ def find_continuous_regions(diff_mask, index):
 st_autorefresh(interval=300000, key="data_refresh")
 st.title("Stock Index Tracker")
 st.sidebar.title("Navigation")
-app_mode = st.sidebar.radio("Go to", ["Summary", "Manage Indices", "View All Indices"])
+app_mode = st.sidebar.radio("Go to", ["Summary", "Manage Indices", "View All Indices", "Historical Backtests"])
 
 saved_indices = load_saved_indices()
 
@@ -727,4 +727,234 @@ elif app_mode == "Summary":
                     st.markdown("---")
             else:
                 st.warning(f"No daily data available for index '{index_name}'.")
+elif app_mode == "Historical Backtests":
+    st.header("Historical Backtests")
+    st.write("This page allows you to perform historical backtesting of jumping of the trend of redisualised betas of thematic stock backets.")
+    
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import statsmodels.api as sm
+    import seaborn as sns
+
+    
+    try:
+        # eq_prices = pd.read_csv('eq_prices.csv', index_col=0, parse_dates=True)
+        eq1 = pd.read_csv('eq1.csv', parse_dates=True)
+        eq2 = pd.read_csv('eq2.csv', parse_dates=True)
+        result = pd.concat([eq1, eq2], axis = 0)
+        eq_prices = result.set_index('as_of_date')
+        eq_prices.index = pd.to_datetime(eq_prices.index)
+    except Exception as e:
+        st.error(f"Error loading eq_prices.csv: {e}")
+        st.stop()
+
+    
+    available_tickers = eq_prices.columns.tolist()
+    st.subheader("Select Stocks for Backtest")
+    subset_columns = st.multiselect(
+        "Select stocks to include in the backtest:",
+        options=available_tickers,
+        default=available_tickers[:5]  
+    )
+
+    
+    selected_columns = [col for col in subset_columns if col in eq_prices.columns]
+    if not selected_columns:
+        st.warning("No valid stocks selected. Please select at least one stock.")
+        st.stop()
+
+    
+    benchmark_columns = eq_prices.columns.tolist()  
+    benchmark_returns = eq_prices[benchmark_columns].pct_change().mean(axis=1)
+
+    if benchmark_returns.isna().all():
+        st.error("Benchmark returns are all NaN. Check your data.")
+        st.stop()
+
+    
+    index_returns = eq_prices[selected_columns].pct_change().mean(axis=1)
+
+    
+    benchmark_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+   
+    index_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    
+    combined_data = pd.concat([benchmark_returns, index_returns], axis=1, join='inner')
+    combined_data.columns = ['Benchmark_Returns', 'Index_Returns']
+
+   
+    clean_data = combined_data.dropna()
+
+   
+    benchmark_returns_clean = clean_data['Benchmark_Returns']
+    index_returns_clean = clean_data['Index_Returns']
+
+    
+    X_clean = sm.add_constant(benchmark_returns_clean)  
+    model_clean = sm.OLS(index_returns_clean, X_clean).fit()
+
+    
+    st.subheader("OLS Regression Summary")
+    st.text(model_clean.summary())
+
+    
+    residuals_clean = model_clean.resid
+
+    
+    st.subheader("Backtest Parameters")
+    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=5)
+    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=1.0)
+    exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=10.0, value=0.5)
+    smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=20)
+    initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0)
+
+    
+    def enhanced_backtest_strategy(residuals, index_returns, d=5, k=1.0, exit_threshold=0.5, smoothing_span=20, initial_index_price=100):
+        
+
+        
+        if not np.issubdtype(residuals.index.dtype, np.datetime64):
+            residuals.index = pd.to_datetime(residuals.index, format='%Y%m%d')
+
+        residuals = residuals.sort_index()  
+        index_returns = index_returns.sort_index()  
+
+        
+        combined_data = pd.concat([residuals, index_returns], axis=1, join='inner')
+        combined_data.columns = ['Residuals', 'Index_Returns']
+
+        residuals = combined_data['Residuals']
+        index_returns = combined_data['Index_Returns']
+
+        
+        cumulative_residuals = residuals.cumsum()
+
+        
+        smoothed = cumulative_residuals.ewm(span=smoothing_span, adjust=False).mean()
+
+        
+        jump = smoothed.diff(d).fillna(0)
+
+        
+        positions = [0] * len(jump)  
+
+   
+        holding = False
+        current_position = 0  
+
+      
+        jump_values = jump.values
+
+        for i in range(len(jump_values)):
+            if holding:
+              
+                if current_position == 1 and jump_values[i] < exit_threshold:
+                  
+                    positions[i] = 0
+                    holding = False
+                    current_position = 0
+                elif current_position == -1 and jump_values[i] > -exit_threshold:
+                    
+                    positions[i] = 0
+                    holding = False
+                    current_position = 0
+                else:
+                   
+                    positions[i] = current_position
+            else:
+                
+                if jump_values[i] > k:
+                    
+                    positions[i] = 1
+                    holding = True
+                    current_position = 1
+                elif jump_values[i] < -k:
+                    
+                    positions[i] = -1
+                    holding = True
+                    current_position = -1
+                else:
+                    
+                    positions[i] = 0
+
+       
+        position = pd.Series(positions, index=jump.index)
+
+       
+        position_shifted = position.shift(1).fillna(0)
+
+        
+        strategy_returns = position_shifted * residuals
+
+        
+        cumulative_strategy_returns = strategy_returns.cumsum()
+
+        
+        index_price = initial_index_price * (1 + index_returns).cumprod()
+
+        
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+
+        
+        ax1.plot(cumulative_strategy_returns.index, cumulative_strategy_returns.values, label='Strategy Cumulative Returns', color='blue')
+        ax1.set_ylabel('Cumulative Returns')
+        ax1.set_title('Strategy Cumulative Returns vs. Index Price')
+        ax1.legend(loc='upper left')
+        ax1.grid(True)
+
+        
+        ax1b = ax1.twinx()
+        ax1b.plot(index_price.index, index_price.values, label='Index Price', color='green', alpha=0.6)
+        ax1b.set_ylabel('Index Price')
+        ax1b.legend(loc='upper right')
+
+        
+        ax2.plot(smoothed.index, smoothed.values, label='Smoothed Cumulative Residuals', color='gray')
+        ax2.set_ylabel('Smoothed Cumulative Residuals')
+        ax2.set_title('Smoothed Jumps and Strategy Positions')
+        ax2.legend(loc='upper left')
+        ax2.grid(True)
+
+        
+        ax2b = ax2.twinx()
+        ax2b.plot(position_shifted.index, position_shifted.values, label='Position', color='red', alpha=0.3)
+        ax2b.set_ylabel('Position')
+        ax2b.set_ylim(-1.5, 1.5)
+        ax2b.legend(loc='upper right')
+
+        plt.xlabel('Date')
+        plt.tight_layout()
+        
+        total_return = cumulative_strategy_returns.iloc[-1]
+
+        
+        num_days = (cumulative_strategy_returns.index[-1] - cumulative_strategy_returns.index[0]).days
+        if num_days > 0:
+            annualized_return = (1 + total_return) ** (365.25 / num_days) - 1
+        else:
+            annualized_return = np.nan
+
+        return fig, total_return, annualized_return
+
+    
+    fig, total_return, annualized_return = enhanced_backtest_strategy(
+        residuals_clean, 
+        index_returns_clean, 
+        d=int(d), 
+        k=float(k), 
+        exit_threshold=float(exit_threshold),  
+        smoothing_span=int(smoothing_span),
+        initial_index_price=float(initial_index_price)
+    )
+
+    
+    st.pyplot(fig)
+
+    
+    st.write(f"**Total Strategy Return:** {total_return:.2%}")
+    st.write(f"**Approximate Annualized Strategy Return:** {annualized_return:.2%}")
+
 
