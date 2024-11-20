@@ -899,10 +899,10 @@ elif app_mode == "Historical Backtests":
                     continue
                 residuals, model = compute_residuals(index_returns, benchmark_returns)
                 st.subheader("Backtest Parameters")
-                d = st.number_input(f"Number of days to look back for detecting jumps (d) - {index_name}", min_value=1, max_value=100, value=7, key=f"d_{index_name}")
-                k = st.number_input(f"Threshold magnitude for entry signals (k) - {index_name}", min_value=0.0, max_value=10.0, value=0.05, key=f"k_{index_name}")
+                d = st.number_input(f"Number of days to look back for detecting jumps (d) - {index_name}", min_value=1, max_value=100, value=10, key=f"d_{index_name}")
+                k = st.number_input(f"Threshold magnitude for entry signals (k) - {index_name}", min_value=0.0, max_value=10.0, value=0.01, key=f"k_{index_name}")
                 exit_threshold = st.number_input(f"Threshold magnitude for exit signals - {index_name}", min_value=0.0, max_value=10.0, value=0.00, key=f"exit_{index_name}")
-                smoothing_span = st.number_input(f"Span parameter for exponential smoothing - {index_name}", min_value=1, max_value=100, value=20, key=f"smoothing_{index_name}")
+                smoothing_span = st.number_input(f"Span parameter for exponential smoothing - {index_name}", min_value=1, max_value=100, value=30, key=f"smoothing_{index_name}")
                 initial_index_price = st.number_input(f"Starting price of the index - {index_name}", min_value=0.0, value=100.0, key=f"initial_price_{index_name}")
                 fig, total_return, annualized_return = enhanced_backtest_strategy(
                     residuals,
