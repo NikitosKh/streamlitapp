@@ -950,10 +950,10 @@ elif app_mode == "Historical Backtests":
     st.subheader("OLS Regression Summary")
     st.text(model.summary())
     st.subheader("Backtest Parameters")
-    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=7, key="custom_d")
-    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=0.05, key="custom_k")
+    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=10, key="custom_d")
+    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=0.01, key="custom_k")
     exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=10.0, value=0.00, key="custom_exit")
-    smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=20, key="custom_smoothing")
+    smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=30, key="custom_smoothing")
     initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0, key="custom_initial_price")
     fig, total_return, annualized_return = enhanced_backtest_strategy(
         residuals,
