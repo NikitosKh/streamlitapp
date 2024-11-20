@@ -730,8 +730,16 @@ elif app_mode == "Summary":
             else:
                 st.warning(f"No daily data available for index '{index_name}'.")
 elif app_mode == "Historical Backtests":
+    import streamlit as st
+    import pandas as pd
+    import numpy as np
+    import statsmodels.api as sm
+    import matplotlib.pyplot as plt
+    from datetime import datetime
+
     st.header("Historical Backtests")
     st.write("This page allows you to perform historical backtesting.")
+
     @st.cache_data
     def load_data():
         eq1 = pd.read_csv('eq1.csv', parse_dates=True)
@@ -741,52 +749,60 @@ elif app_mode == "Historical Backtests":
         eq_prices.index = pd.to_datetime(eq_prices.index)
         return eq_prices
 
-    
+    eq_prices = load_data()
 
-    # Load eq1.csv and eq2.csv, concatenate to get eq_prices
-    try:
+    @st.cache_data
+    def compute_benchmark_returns(eq_prices, start_date, end_date):
+        benchmark_prices = eq_prices.loc[start_date:end_date]
+        benchmark_returns = benchmark_prices.pct_change().mean(axis=1)
+        benchmark_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
+        benchmark_returns.dropna(inplace=True)
+        return benchmark_returns
 
-        # eq1 = pd.read_csv('eq1.csv', parse_dates=True)
-        # eq2 = pd.read_csv('eq2.csv', parse_dates=True)
-        # eq_prices = pd.concat([eq1, eq2], axis=0)
-        # eq_prices.set_index('as_of_date', inplace=True)
-        # eq_prices.index = pd.to_datetime(eq_prices.index)
-        eq_prices = load_data()
-        # Prepend 'USEQ:' to each symbol in eq_prices columns
-        # eq_prices.columns = ['USEQ:' + col for col in eq_prices.columns]
-        # Prepend 'USEQ:' to each symbol in eq_prices columns
-        # eq_prices.columns = ['USEQ:' + col for col in eq_prices.columns]
-    except Exception as e:
-        st.error(f"Error loading eq1.csv and eq2.csv: {e}")
-        st.stop()
+    @st.cache_data
+    def compute_index_returns(eq_prices, symbols, weights, start_date, end_date):
+        index_prices = eq_prices[symbols].loc[start_date:end_date]
+        weight_series = pd.Series(weights, index=symbols)
+        weighted_prices = index_prices.multiply(weight_series, axis=1)
+        index_price_series = weighted_prices.sum(axis=1)
+        index_returns = index_price_series.pct_change().dropna()
+        index_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
+        index_returns.dropna(inplace=True)
+        return index_returns
 
-    # Function to perform the enhanced backtest strategy
+    @st.cache_data
+    def compute_residuals(index_returns, benchmark_returns):
+        aligned_index_returns, aligned_benchmark_returns = index_returns.align(benchmark_returns, join='inner')
+        aligned_data = pd.concat([aligned_index_returns, aligned_benchmark_returns], axis=1).dropna()
+        aligned_index_returns = aligned_data.iloc[:, 0]
+        aligned_benchmark_returns = aligned_data.iloc[:, 1]
+        aligned_benchmark_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
+        aligned_index_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
+        X = sm.add_constant(aligned_benchmark_returns)
+        y = aligned_index_returns.reindex(X.index)
+        if y.isna().any():
+            X = X.loc[~y.isna()]
+            y = y.dropna()
+        model = sm.OLS(y, X).fit()
+        residuals = model.resid
+        return residuals, model
+
     def enhanced_backtest_strategy(residuals, index_returns, d=7, k=0.05, exit_threshold=0.00, smoothing_span=20, initial_index_price=100):
         if not np.issubdtype(residuals.index.dtype, np.datetime64):
             residuals.index = pd.to_datetime(residuals.index, format='%Y%m%d')
-
         residuals = residuals.sort_index()
         index_returns = index_returns.sort_index()
-
         combined_data = pd.concat([residuals, index_returns], axis=1, join='inner')
         combined_data.columns = ['Residuals', 'Index_Returns']
-
         residuals = combined_data['Residuals']
         index_returns = combined_data['Index_Returns']
-
         cumulative_residuals = residuals.cumsum()
-
         smoothed = cumulative_residuals.ewm(span=smoothing_span, adjust=False).mean()
-
         jump = smoothed.diff(d).fillna(0)
-
         positions = [0] * len(jump)
-
         holding = False
         current_position = 0
-
         jump_values = jump.values
-
         for i in range(len(jump_values)):
             if holding:
                 if current_position == 1 and jump_values[i] < exit_threshold:
@@ -810,184 +826,94 @@ elif app_mode == "Historical Backtests":
                     current_position = -1
                 else:
                     positions[i] = 0
-
         position = pd.Series(positions, index=jump.index)
-
         position_shifted = position.shift(1).fillna(0)
-
         strategy_returns = position_shifted * residuals
-
         cumulative_strategy_returns = strategy_returns.cumsum()
-
         index_price_series = initial_index_price * (1 + index_returns).cumprod()
-
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
-
         ax1.plot(cumulative_strategy_returns.index, cumulative_strategy_returns.values, label='Strategy Cumulative Returns', color='blue')
         ax1.set_ylabel('Cumulative Returns')
         ax1.set_title('Strategy Cumulative Returns vs. Index Price')
         ax1.legend(loc='upper left')
         ax1.grid(True)
-
         ax1b = ax1.twinx()
         ax1b.plot(index_price_series.index, index_price_series.values, label='Index Price', color='green', alpha=0.6)
         ax1b.set_ylabel('Index Price')
         ax1b.legend(loc='upper right')
-
         ax2.plot(smoothed.index, smoothed.values, label='Smoothed Cumulative Residuals', color='gray')
         ax2.set_ylabel('Smoothed Cumulative Residuals')
         ax2.set_title('Smoothed Jumps and Strategy Positions')
         ax2.legend(loc='upper left')
         ax2.grid(True)
-
         ax2b = ax2.twinx()
         ax2b.plot(position_shifted.index, position_shifted.values, label='Position', color='red', alpha=0.3)
         ax2b.set_ylabel('Position')
         ax2b.set_ylim(-1.5, 1.5)
         ax2b.legend(loc='upper right')
-
         plt.xlabel('Date')
         plt.tight_layout()
-
         total_return = cumulative_strategy_returns.iloc[-1]
-
         num_days = (cumulative_strategy_returns.index[-1] - cumulative_strategy_returns.index[0]).days
         if num_days > 0:
             annualized_return = (1 + total_return) ** (365.25 / num_days) - 1
         else:
             annualized_return = np.nan
-
         return fig, total_return, annualized_return
 
-    # Backtesting Saved Indices
+    # Assuming saved_indices is defined elsewhere in your code
     if saved_indices:
         st.subheader("Backtesting Saved Indices")
-
         st.sidebar.subheader("Select Date Range for Backtest")
         start_date = st.sidebar.date_input("Start Date", datetime(2020, 1, 1))
         end_date = st.sidebar.date_input("End Date", datetime.today())
-
-        # Convert start_date and end_date to datetime without timezone
         start_date = pd.to_datetime(start_date).tz_localize(None)
         end_date = pd.to_datetime(end_date).tz_localize(None)
-
-        # Compute benchmark returns from eq_prices over the selected date range
-        benchmark_prices = eq_prices.loc[start_date:end_date]
-        benchmark_returns = benchmark_prices.pct_change().mean(axis=1)
-        # Replace infinities with NaNs
-        benchmark_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
-        benchmark_returns.dropna(inplace=True)
-
+        benchmark_returns = compute_benchmark_returns(eq_prices, start_date, end_date)
         if benchmark_returns.isna().all():
             st.error("Benchmark returns are all NaN. Check your data.")
             st.stop()
-
         for index_name, details in saved_indices.items():
             with st.expander(f"{index_name}"):
                 st.subheader(f"Backtest for Index: {index_name}")
                 weights = details['stocks']
                 symbols = list(weights.keys())
                 weight_values = list(weights.values())
-
-                # Prepend 'USEQ:' to each symbol
                 symbols_with_prefix = ['USEQ:' + symbol for symbol in symbols]
-
-                # Identify missing symbols
                 missing_symbols = [symbol for symbol in symbols_with_prefix if symbol not in eq_prices.columns]
                 if missing_symbols:
                     st.warning(f"Symbols {missing_symbols} not found in the price data. They will be excluded from the index '{index_name}'.")
-
-                # Use only available symbols
                 available_symbols = [symbol for symbol in symbols_with_prefix if symbol in eq_prices.columns]
                 if not available_symbols:
                     st.error(f"No available symbols for index '{index_name}'. Skipping.")
                     continue
-
-                # Adjust weights for available symbols
-                available_weights = [weights[symbol[5:]] for symbol in available_symbols]  # Remove 'USEQ:' when looking up in weights
-
-                # Rescale weights to sum to 1
+                available_weights = [weights[symbol[5:]] for symbol in available_symbols]
                 total_weight = sum(available_weights)
                 if total_weight == 0:
                     st.error(f"Total weight is zero for index '{index_name}'. Skipping.")
                     continue
                 adjusted_weights = [w / total_weight for w in available_weights]
-
-                # Get prices for the available symbols over the selected date range
-                index_prices = eq_prices[available_symbols].loc[start_date:end_date]
-
-                # Drop rows with missing values
-                index_prices = index_prices.dropna()
-                index_prices.index = index_prices.index.tz_localize(None)  # Ensure index is timezone-naive
-
-                if index_prices.empty:
+                index_returns = compute_index_returns(eq_prices, available_symbols, adjusted_weights, start_date, end_date)
+                if index_returns.empty:
                     st.warning(f"No data available for index '{index_name}' in the selected date range.")
                     continue
-
-                # Multiply each column by its adjusted weight
-                weight_series = pd.Series(adjusted_weights, index=available_symbols)
-                weighted_prices = index_prices.multiply(weight_series, axis=1)
-
-                # Sum up the weighted prices to get the index price
-                index_price_series = weighted_prices.sum(axis=1)
-
-                # Calculate index returns
-                index_returns = index_price_series.pct_change().dropna()
-                index_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
-                index_returns.dropna(inplace=True)
-
-                # Align with benchmark returns
-                aligned_index_returns, aligned_benchmark_returns = index_returns.align(benchmark_returns, join='inner')
-
-                # Drop NaNs in aligned returns
-                aligned_data = pd.concat([aligned_index_returns, aligned_benchmark_returns], axis=1).dropna()
-                aligned_index_returns = aligned_data.iloc[:, 0]
-                aligned_benchmark_returns = aligned_data.iloc[:, 1]
-
-                # Ensure no NaNs or Infs in regression variables
-                aligned_benchmark_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
-                aligned_index_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
-
-                # Check if data is sufficient for regression
-                if len(aligned_index_returns) < 2:
-                    st.error(f"Not enough data to perform regression for index '{index_name}'.")
-                    continue
-
-                # Calculate residuals using OLS regression
-                X = sm.add_constant(aligned_benchmark_returns)
-                X = X.replace([np.inf, -np.inf], np.nan).dropna()
-                y = aligned_index_returns.reindex(X.index)
-                if y.isna().any():
-                    X = X.loc[~y.isna()]
-                    y = y.dropna()
-                try:
-                    model = sm.OLS(y, X).fit()
-                    residuals = model.resid
-                except Exception as e:
-                    st.error(f"Regression failed for index '{index_name}': {e}")
-                    continue
-
-                # Backtest parameters
+                residuals, model = compute_residuals(index_returns, benchmark_returns)
                 st.subheader("Backtest Parameters")
                 d = st.number_input(f"Number of days to look back for detecting jumps (d) - {index_name}", min_value=1, max_value=100, value=7, key=f"d_{index_name}")
                 k = st.number_input(f"Threshold magnitude for entry signals (k) - {index_name}", min_value=0.0, max_value=10.0, value=0.05, key=f"k_{index_name}")
                 exit_threshold = st.number_input(f"Threshold magnitude for exit signals - {index_name}", min_value=0.0, max_value=10.0, value=0.00, key=f"exit_{index_name}")
                 smoothing_span = st.number_input(f"Span parameter for exponential smoothing - {index_name}", min_value=1, max_value=100, value=20, key=f"smoothing_{index_name}")
                 initial_index_price = st.number_input(f"Starting price of the index - {index_name}", min_value=0.0, value=100.0, key=f"initial_price_{index_name}")
-
-                # Perform backtest
                 fig, total_return, annualized_return = enhanced_backtest_strategy(
                     residuals,
-                    aligned_index_returns.loc[residuals.index],
+                    index_returns.loc[residuals.index],
                     d=int(d),
                     k=float(k),
                     exit_threshold=float(exit_threshold),
                     smoothing_span=int(smoothing_span),
                     initial_index_price=float(initial_index_price)
                 )
-
                 st.pyplot(fig)
-
                 st.write(f"**Total Strategy Return:** {total_return:.2%}")
                 st.write(f"**Approximate Annualized Strategy Return:** {annualized_return:.2%}")
     else:
@@ -995,90 +921,49 @@ elif app_mode == "Historical Backtests":
 
     # Backtesting Custom Stock Selection
     st.subheader("Backtesting Custom Stock Selection")
-
     available_tickers = eq_prices.columns.tolist()
     subset_columns = st.multiselect(
         "Select stocks to include in the backtest:",
         options=available_tickers,
         default=available_tickers[:5]
     )
-
     selected_columns = [col for col in subset_columns if col in eq_prices.columns]
     if not selected_columns:
         st.warning("No valid stocks selected. Please select at least one stock.")
         st.stop()
-
-    # Compute benchmark returns over the selected date range
-    benchmark_prices = eq_prices.loc[start_date:end_date]
-    benchmark_returns = benchmark_prices.pct_change().mean(axis=1)
-    benchmark_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
-    benchmark_returns.dropna(inplace=True)
-
+    start_date = st.sidebar.date_input("Start Date", datetime(2020, 1, 1), key="custom_start_date")
+    end_date = st.sidebar.date_input("End Date", datetime.today(), key="custom_end_date")
+    start_date = pd.to_datetime(start_date).tz_localize(None)
+    end_date = pd.to_datetime(end_date).tz_localize(None)
+    benchmark_returns = compute_benchmark_returns(eq_prices, start_date, end_date)
     if benchmark_returns.isna().all():
         st.error("Benchmark returns are all NaN. Check your data.")
         st.stop()
-
-    # Compute index returns
     index_prices = eq_prices[selected_columns].loc[start_date:end_date]
     index_returns = index_prices.pct_change().mean(axis=1)
     index_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
     index_returns.dropna(inplace=True)
-
-    # Align and clean data
-    combined_data = pd.concat([benchmark_returns, index_returns], axis=1, join='inner')
-    combined_data.columns = ['Benchmark_Returns', 'Index_Returns']
-    combined_data.replace([np.inf, -np.inf], np.nan, inplace=True)
-    clean_data = combined_data.dropna()
-    benchmark_returns_clean = clean_data['Benchmark_Returns']
-    index_returns_clean = clean_data['Index_Returns']
-
-    # Ensure no NaNs or Infs in regression variables
-    benchmark_returns_clean.replace([np.inf, -np.inf], np.nan, inplace=True)
-    index_returns_clean.replace([np.inf, -np.inf], np.nan, inplace=True)
-
-    if len(index_returns_clean) < 2:
-        st.error("Not enough data to perform regression. Please select different stocks or adjust the date range.")
+    if index_returns.empty:
+        st.warning("No data available for the selected stocks in the selected date range.")
         st.stop()
-
-    # OLS regression to get residuals
-    X_clean = sm.add_constant(benchmark_returns_clean)
-    y_clean = index_returns_clean.reindex(X_clean.index)
-    if y_clean.isna().any():
-        X_clean = X_clean.loc[~y_clean.isna()]
-        y_clean = y_clean.dropna()
-    try:
-        model_clean = sm.OLS(y_clean, X_clean).fit()
-    except Exception as e:
-        st.error(f"Regression failed: {e}")
-        st.stop()
-    residuals_clean = model_clean.resid
-
+    residuals, model = compute_residuals(index_returns, benchmark_returns)
     st.subheader("OLS Regression Summary")
-    st.text(model_clean.summary())
-
-    # Backtest parameters
+    st.text(model.summary())
     st.subheader("Backtest Parameters")
-    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=7)
-    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=0.05)
-    exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=10.0, value=0.00)
-    smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=20)
-    initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0)
-
-    # Perform backtest
+    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=7, key="custom_d")
+    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=0.05, key="custom_k")
+    exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=10.0, value=0.00, key="custom_exit")
+    smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=20, key="custom_smoothing")
+    initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0, key="custom_initial_price")
     fig, total_return, annualized_return = enhanced_backtest_strategy(
-        residuals_clean,
-        index_returns_clean.loc[residuals_clean.index],
+        residuals,
+        index_returns.loc[residuals.index],
         d=int(d),
         k=float(k),
         exit_threshold=float(exit_threshold),
         smoothing_span=int(smoothing_span),
         initial_index_price=float(initial_index_price)
     )
-
     st.pyplot(fig)
-
     st.write(f"**Total Strategy Return:** {total_return:.2%}")
     st.write(f"**Approximate Annualized Strategy Return:** {annualized_return:.2%}")
-
-
-
