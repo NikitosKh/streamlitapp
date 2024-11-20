@@ -877,18 +877,30 @@ elif app_mode == "Historical Backtests":
 
                 # Prepend 'USEQ:' to each symbol
                 symbols_with_prefix = ['USEQ:' + symbol for symbol in symbols]
-                
-                
 
-                # Check if all symbols are in eq_prices
+                # Identify missing symbols
                 missing_symbols = [symbol for symbol in symbols_with_prefix if symbol not in eq_prices.columns]
-                # if missing_symbols:
-                #     st.error(f"Symbols {missing_symbols} not found in the price data. Skipping index '{index_name}'. equties columns: {eq_prices.columns[:10]}")
-                #     continue
-                symbols_with_prefix = [name for name in symbols_with_prefix if name not in missing_symbols]
+                if missing_symbols:
+                    st.warning(f"Symbols {missing_symbols} not found in the price data. They will be excluded from the index '{index_name}'.")
 
-                # Get prices for the symbols over the selected date range
-                index_prices = eq_prices[symbols_with_prefix].loc[start_date:end_date]
+                # Use only available symbols
+                available_symbols = [symbol for symbol in symbols_with_prefix if symbol in eq_prices.columns]
+                if not available_symbols:
+                    st.error(f"No available symbols for index '{index_name}'. Skipping.")
+                    continue
+
+                # Adjust weights for available symbols
+                available_weights = [weights[symbol[5:]] for symbol in available_symbols]  # Remove 'USEQ:' when looking up in weights
+
+                # Rescale weights to sum to 1
+                total_weight = sum(available_weights)
+                if total_weight == 0:
+                    st.error(f"Total weight is zero for index '{index_name}'. Skipping.")
+                    continue
+                adjusted_weights = [w / total_weight for w in available_weights]
+
+                # Get prices for the available symbols over the selected date range
+                index_prices = eq_prices[available_symbols].loc[start_date:end_date]
 
                 # Drop rows with missing values
                 index_prices = index_prices.dropna()
@@ -898,8 +910,8 @@ elif app_mode == "Historical Backtests":
                     st.warning(f"No data available for index '{index_name}' in the selected date range.")
                     continue
 
-                # Multiply each column by its weight
-                weight_series = pd.Series(weight_values, index=symbols_with_prefix)
+                # Multiply each column by its adjusted weight
+                weight_series = pd.Series(adjusted_weights, index=available_symbols)
                 weighted_prices = index_prices.multiply(weight_series, axis=1)
 
                 # Sum up the weighted prices to get the index price
