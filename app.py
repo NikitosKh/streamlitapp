@@ -106,7 +106,7 @@ def find_continuous_regions(diff_mask, index):
         regions.append((start, index[-1]))
     return regions
 
-st_autorefresh(interval=300000, key="data_refresh")
+st_autorefresh(interval=3000000, key="data_refresh")
 st.title("Stock Index Tracker")
 st.sidebar.title("Navigation")
 app_mode = st.sidebar.radio("Go to", ["Summary", "Manage Indices", "View All Indices", "Historical Backtests"])
