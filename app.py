@@ -877,7 +877,7 @@ elif app_mode == "Historical Backtests":
 
                 # Prepend 'USEQ:' to each symbol
                 symbols_with_prefix = ['USEQ:' + symbol for symbol in symbols]
-                symbols_with_prefix = [symbol for symbol in symbols if symbol in eq_prices.columns]
+                
                 
 
                 # Check if all symbols are in eq_prices
