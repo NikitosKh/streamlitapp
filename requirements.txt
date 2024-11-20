@@ -5,3 +5,6 @@ pandas
 plotly
 numpy
 scikit-learn
+seaborn
+statsmodels
+matplotlib
