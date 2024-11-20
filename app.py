@@ -787,7 +787,7 @@ elif app_mode == "Historical Backtests":
         residuals = model.resid
         return residuals, model
 
-    def enhanced_backtest_strategy(residuals, index_returns, d=7, k=0.05, exit_threshold=0.00, smoothing_span=20, initial_index_price=100):
+    def enhanced_backtest_strategy(residuals, index_returns, d=10, k=0.01, exit_threshold=0.00, smoothing_span=30, initial_index_price=100):
         if not np.issubdtype(residuals.index.dtype, np.datetime64):
             residuals.index = pd.to_datetime(residuals.index, format='%Y%m%d')
         residuals = residuals.sort_index()
