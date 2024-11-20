@@ -812,7 +812,7 @@ elif app_mode == "Historical Backtests":
     initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0)
 
     
-    def enhanced_backtest_strategy(residuals, index_returns, d=5, k=1.0, exit_threshold=0.5, smoothing_span=20, initial_index_price=100):
+    def enhanced_backtest_strategy(residuals, index_returns, d=7, k=0.05, exit_threshold=0.00, smoothing_span=20, initial_index_price=100):
         
 
         
