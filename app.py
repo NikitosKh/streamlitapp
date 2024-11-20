@@ -732,14 +732,28 @@ elif app_mode == "Summary":
 elif app_mode == "Historical Backtests":
     st.header("Historical Backtests")
     st.write("This page allows you to perform historical backtesting.")
-
-    # Load eq1.csv and eq2.csv, concatenate to get eq_prices
-    try:
+    @st.cache_data
+    def load_data():
         eq1 = pd.read_csv('eq1.csv', parse_dates=True)
         eq2 = pd.read_csv('eq2.csv', parse_dates=True)
         eq_prices = pd.concat([eq1, eq2], axis=0)
         eq_prices.set_index('as_of_date', inplace=True)
         eq_prices.index = pd.to_datetime(eq_prices.index)
+        return eq_prices
+
+    
+
+    # Load eq1.csv and eq2.csv, concatenate to get eq_prices
+    try:
+
+        # eq1 = pd.read_csv('eq1.csv', parse_dates=True)
+        # eq2 = pd.read_csv('eq2.csv', parse_dates=True)
+        # eq_prices = pd.concat([eq1, eq2], axis=0)
+        # eq_prices.set_index('as_of_date', inplace=True)
+        # eq_prices.index = pd.to_datetime(eq_prices.index)
+        eq_prices = load_data()
+        # Prepend 'USEQ:' to each symbol in eq_prices columns
+        # eq_prices.columns = ['USEQ:' + col for col in eq_prices.columns]
         # Prepend 'USEQ:' to each symbol in eq_prices columns
         # eq_prices.columns = ['USEQ:' + col for col in eq_prices.columns]
     except Exception as e:
