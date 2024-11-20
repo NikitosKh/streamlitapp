@@ -882,9 +882,9 @@ elif app_mode == "Historical Backtests":
 
                 # Check if all symbols are in eq_prices
                 missing_symbols = [symbol for symbol in symbols_with_prefix if symbol not in eq_prices.columns]
-                # if missing_symbols:
-                #     st.error(f"Symbols {missing_symbols} not found in the price data. Skipping index '{index_name}'.")
-                #     continue
+                if missing_symbols:
+                    st.error(f"Symbols {missing_symbols} not found in the price data. Skipping index '{index_name}'. equties columns: {eq_prices.columns[:10]}")
+                    continue
 
                 # Get prices for the symbols over the selected date range
                 index_prices = eq_prices[symbols_with_prefix].loc[start_date:end_date]
