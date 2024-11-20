@@ -805,9 +805,9 @@ elif app_mode == "Historical Backtests":
 
     
     st.subheader("Backtest Parameters")
-    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=5)
-    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=1.0)
-    exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=10.0, value=0.5)
+    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=7)
+    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=0.05)
+    exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=10.0, value=0.00)
     smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=20)
     initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0)
 
