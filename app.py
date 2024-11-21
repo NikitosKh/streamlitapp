@@ -934,6 +934,7 @@ elif app_mode == "Historical Backtests":
                     initial_index_price=float(initial_index_price)
                 )
                 st.pyplot(fig)
+                plt.close(fig)
                 st.write(f"**Total Strategy Return:** {total_return:.2%}")
                 st.write(f"**Approximate Annualized Strategy Return:** {annualized_return:.2%}")
     else:
@@ -995,5 +996,6 @@ elif app_mode == "Historical Backtests":
         initial_index_price=float(initial_index_price)
     )
     st.pyplot(fig)
+    plt.close(fig)
     st.write(f"**Total Strategy Return:** {total_return:.2%}")
     st.write(f"**Approximate Annualized Strategy Return:** {annualized_return:.2%}")
