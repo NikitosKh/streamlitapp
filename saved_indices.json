@@ -629,5 +629,80 @@
         "stocks": {
             "INDA": 1.0
         }
+    },
+    "India": {
+        "stocks": {
+            "INDA": 1.0
+        }
+    },
+    "China": {
+        "stocks": {
+            "MCHI": 1.0
+        }
+    },
+    "Taiwan": {
+        "stocks": {
+            "EWT": 1.0
+        }
+    },
+    "South Korea": {
+        "stocks": {
+            "EWY": 1.0
+        }
+    },
+    "Mexico": {
+        "stocks": {
+            "EWW": 1.0
+        }
+    },
+    "Saudi Arabia": {
+        "stocks": {
+            "KSA": 1.0
+        }
+    },
+    "Chile": {
+        "stocks": {
+            "ECH": 1.0
+        }
+    },
+    "Malaysia": {
+        "stocks": {
+            "EWM": 1.0
+        }
+    },
+    "Indonesia": {
+        "stocks": {
+            "EIDO": 1.0
+        }
+    },
+    "South Africa": {
+        "stocks": {
+            "EZA": 1.0
+        }
+    },
+    "Poland": {
+        "stocks": {
+            "EPOL": 1.0
+        }
+    },
+    "Thailand": {
+        "stocks": {
+            "THD": 1.0
+        }
+    },
+    "Turkey": {
+        "stocks": {
+            "TUR": 1.0
+        }
+    },
+    "Phillippines": {
+        "stocks": {
+            "EPHE": 1.0
+        }
+    },
+    "Peru": {
+        "stocks": {
+            "EPU": 1.0
+        }
     }
 }
