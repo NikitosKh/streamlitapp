@@ -747,7 +747,7 @@ elif app_mode == "Historical Backtests":
         eq_prices = pd.concat([eq1, eq2], axis=0)
         eq_prices.set_index('as_of_date', inplace=True)
         eq_prices.index = pd.to_datetime(eq_prices.index)
-        eq_prices['EMInotChina'] = eq_prices['IEMG'] - 0.25 * eq_prices['MCMI']
+        eq_prices['EMInotChina'] = eq_prices['USEQ:IEMG'] - 0.25 * eq_prices['USEQ:MCMI']
         return eq_prices
 
     eq_prices = load_data()
