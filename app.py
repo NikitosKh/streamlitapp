@@ -882,7 +882,7 @@ elif app_mode == "Historical Backtests":
         names = st.multiselect(
             "Select tickers for calculating beta with respect to",
             options=available_tickers,
-            default=available_tickers[:1]
+            default=['USEQ:SPY']
         )
         names = [col for col in names if col in eq_prices.columns]
 
