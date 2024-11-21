@@ -878,6 +878,8 @@ elif app_mode == "Historical Backtests":
         end_date = st.sidebar.date_input("End Date", datetime.today())
         start_date = pd.to_datetime(start_date).tz_localize(None)
         end_date = pd.to_datetime(end_date).tz_localize(None)
+        start_date1 = pd.to_datetime('2020-01-02').tz_localize(None)
+        end_date1 = pd.to_datetime('2024-11-10').tz_localize(None)
         available_tickers = eq_prices.columns.tolist()
         names = st.multiselect(
             "Select tickers for calculating beta with respect to",
@@ -888,7 +890,11 @@ elif app_mode == "Historical Backtests":
 
 
         benchmark_returns = compute_benchmark_returns(eq_prices, start_date, end_date, names)
+        benchmark_returns1 = compute_benchmark_returns(eq_prices, start_date1, end_date1, names)
         if benchmark_returns.isna().all():
+            st.error("Benchmark returns are all NaN. Check your data.")
+            st.stop()
+        if benchmark_returns1.isna().all():
             st.error("Benchmark returns are all NaN. Check your data.")
             st.stop()
         for index_name, details in saved_indices.items():
@@ -912,10 +918,15 @@ elif app_mode == "Historical Backtests":
                     continue
                 adjusted_weights = [w / total_weight for w in available_weights]
                 index_returns = compute_index_returns(eq_prices, available_symbols, adjusted_weights, start_date, end_date)
+                index_returns1 = compute_index_returns(eq_prices, available_symbols, adjusted_weights, start_date1, end_date1)
                 if index_returns.empty:
                     st.warning(f"No data available for index '{index_name}' in the selected date range.")
                     continue
+                if index_returns1.empty:
+                    st.warning(f"No data available for index '{index_name}' in the selected date range.")
+                    continue
                 residuals, model, aligned_index_returns, aligned_benchmark_returns = compute_residuals(index_returns, benchmark_returns)
+                residuals1, model1, aligned_index_returns1, aligned_benchmark_returns1 = compute_residuals(index_returns1, benchmark_returns1)
                 st.subheader("Backtest Parameters")
                 d = st.number_input(f"Number of days to look back for detecting jumps (d) - {index_name}", min_value=1, max_value=100, value=10, key=f"d_{index_name}")
                 k = st.number_input(f"Threshold magnitude for entry signals (k) - {index_name}", min_value=0.0, max_value=10.0, value=0.01, key=f"k_{index_name}")
@@ -926,7 +937,7 @@ elif app_mode == "Historical Backtests":
                     residuals,
                     aligned_index_returns,
                     aligned_benchmark_returns,
-                    model,
+                    model1,
                     d=int(d),
                     k=float(k),
                     exit_threshold=float(exit_threshold),
@@ -935,6 +946,7 @@ elif app_mode == "Historical Backtests":
                 )
                 st.pyplot(fig)
                 plt.close(fig)
+
                 st.write(f"**Total Strategy Return:** {total_return:.2%}")
                 st.write(f"**Approximate Annualized Strategy Return:** {annualized_return:.2%}")
     else:
