@@ -106,7 +106,7 @@ def find_continuous_regions(diff_mask, index):
         regions.append((start, index[-1]))
     return regions
 
-st_autorefresh(interval=3000000, key="data_refresh")
+st_autorefresh(interval=300000, key="data_refresh")
 st.title("Stock Index Tracker")
 st.sidebar.title("Navigation")
 app_mode = st.sidebar.radio("Go to", ["Summary", "Manage Indices", "View All Indices", "Historical Backtests"])
@@ -738,7 +738,7 @@ elif app_mode == "Historical Backtests":
     from datetime import datetime
 
     st.header("Historical Backtests")
-    st.write("This page allows you to perform historical backtesting.")
+    st.write("This page allows you to perform historical backtesting with beta hedging.")
 
     @st.cache_data
     def load_data():
@@ -752,8 +752,8 @@ elif app_mode == "Historical Backtests":
     eq_prices = load_data()
 
     @st.cache_data
-    def compute_benchmark_returns(eq_prices, start_date, end_date):
-        benchmark_prices = eq_prices.loc[start_date:end_date]
+    def compute_benchmark_returns(eq_prices, start_date, end_date, names):
+        benchmark_prices = eq_prices.loc[start_date:end_date, names]
         benchmark_returns = benchmark_prices.pct_change().mean(axis=1)
         benchmark_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
         benchmark_returns.dropna(inplace=True)
@@ -785,18 +785,21 @@ elif app_mode == "Historical Backtests":
             y = y.dropna()
         model = sm.OLS(y, X).fit()
         residuals = model.resid
-        return residuals, model
+        return residuals, model, aligned_index_returns, aligned_benchmark_returns
 
-    def enhanced_backtest_strategy(residuals, index_returns, d=10, k=0.01, exit_threshold=0.00, smoothing_span=30, initial_index_price=100):
+    def enhanced_backtest_strategy(residuals, index_returns, benchmark_returns, model, d=10, k=0.01, exit_threshold=0.00, smoothing_span=30, initial_index_price=100):
         if not np.issubdtype(residuals.index.dtype, np.datetime64):
             residuals.index = pd.to_datetime(residuals.index, format='%Y%m%d')
         residuals = residuals.sort_index()
         index_returns = index_returns.sort_index()
-        combined_data = pd.concat([residuals, index_returns], axis=1, join='inner')
-        combined_data.columns = ['Residuals', 'Index_Returns']
-        residuals = combined_data['Residuals']
+        benchmark_returns = benchmark_returns.sort_index()
+        combined_data = pd.concat([residuals, index_returns, benchmark_returns], axis=1, join='inner')
+        combined_data.columns = ['Residuals', 'Index_Returns', 'Benchmark_Returns']
+        residuals = combined_data['Residuals'] #this one is to be remooved
+        residuals_absolute = combined_data['Residuals'] + 1
         index_returns = combined_data['Index_Returns']
-        cumulative_residuals = residuals.cumsum()
+        benchmark_returns = combined_data['Benchmark_Returns']
+        cumulative_residuals = residuals_absolute.cumprod()  #this one has to be remooved as well
         smoothed = cumulative_residuals.ewm(span=smoothing_span, adjust=False).mean()
         jump = smoothed.diff(d).fillna(0)
         positions = [0] * len(jump)
@@ -828,7 +831,13 @@ elif app_mode == "Historical Backtests":
                     positions[i] = 0
         position = pd.Series(positions, index=jump.index)
         position_shifted = position.shift(1).fillna(0)
-        strategy_returns = position_shifted * residuals
+        # Get beta from the model
+        beta = model.params[1]
+        st.write(f"Beta is {beta}")
+        # Compute hedged returns
+        hedged_return = index_returns - beta * benchmark_returns
+        # Compute strategy returns with beta hedging
+        strategy_returns = position_shifted * hedged_return
         cumulative_strategy_returns = strategy_returns.cumsum()
         index_price_series = initial_index_price * (1 + index_returns).cumprod()
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
@@ -869,7 +878,16 @@ elif app_mode == "Historical Backtests":
         end_date = st.sidebar.date_input("End Date", datetime.today())
         start_date = pd.to_datetime(start_date).tz_localize(None)
         end_date = pd.to_datetime(end_date).tz_localize(None)
-        benchmark_returns = compute_benchmark_returns(eq_prices, start_date, end_date)
+        available_tickers = eq_prices.columns.tolist()
+        names = st.multiselect(
+            "Select tickers for calculating beta with respect to",
+            options=available_tickers,
+            default=available_tickers[:1]
+        )
+        names = [col for col in names if col in eq_prices.columns]
+
+
+        benchmark_returns = compute_benchmark_returns(eq_prices, start_date, end_date, names)
         if benchmark_returns.isna().all():
             st.error("Benchmark returns are all NaN. Check your data.")
             st.stop()
@@ -897,7 +915,7 @@ elif app_mode == "Historical Backtests":
                 if index_returns.empty:
                     st.warning(f"No data available for index '{index_name}' in the selected date range.")
                     continue
-                residuals, model = compute_residuals(index_returns, benchmark_returns)
+                residuals, model, aligned_index_returns, aligned_benchmark_returns = compute_residuals(index_returns, benchmark_returns)
                 st.subheader("Backtest Parameters")
                 d = st.number_input(f"Number of days to look back for detecting jumps (d) - {index_name}", min_value=1, max_value=100, value=10, key=f"d_{index_name}")
                 k = st.number_input(f"Threshold magnitude for entry signals (k) - {index_name}", min_value=0.0, max_value=10.0, value=0.01, key=f"k_{index_name}")
@@ -906,7 +924,9 @@ elif app_mode == "Historical Backtests":
                 initial_index_price = st.number_input(f"Starting price of the index - {index_name}", min_value=0.0, value=100.0, key=f"initial_price_{index_name}")
                 fig, total_return, annualized_return = enhanced_backtest_strategy(
                     residuals,
-                    index_returns.loc[residuals.index],
+                    aligned_index_returns,
+                    aligned_benchmark_returns,
+                    model,
                     d=int(d),
                     k=float(k),
                     exit_threshold=float(exit_threshold),
@@ -935,7 +955,14 @@ elif app_mode == "Historical Backtests":
     end_date = st.sidebar.date_input("End Date", datetime.today(), key="custom_end_date")
     start_date = pd.to_datetime(start_date).tz_localize(None)
     end_date = pd.to_datetime(end_date).tz_localize(None)
-    benchmark_returns = compute_benchmark_returns(eq_prices, start_date, end_date)
+    available_tickers = eq_prices.columns.tolist()
+    # names = st.multiselect(
+    #     "Select tickers for calculating beta with respect to",
+    #     options=available_tickers,
+    #     default=['USEQ:SPY']
+    # )
+    # names = [col for col in names if col in eq_prices.columns]
+    benchmark_returns = compute_benchmark_returns(eq_prices, start_date, end_date, names)
     if benchmark_returns.isna().all():
         st.error("Benchmark returns are all NaN. Check your data.")
         st.stop()
@@ -946,7 +973,7 @@ elif app_mode == "Historical Backtests":
     if index_returns.empty:
         st.warning("No data available for the selected stocks in the selected date range.")
         st.stop()
-    residuals, model = compute_residuals(index_returns, benchmark_returns)
+    residuals, model, aligned_index_returns, aligned_benchmark_returns = compute_residuals(index_returns, benchmark_returns)
     st.subheader("OLS Regression Summary")
     st.text(model.summary())
     st.subheader("Backtest Parameters")
@@ -954,10 +981,13 @@ elif app_mode == "Historical Backtests":
     k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=0.01, key="custom_k")
     exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=10.0, value=0.00, key="custom_exit")
     smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=30, key="custom_smoothing")
+    
     initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0, key="custom_initial_price")
     fig, total_return, annualized_return = enhanced_backtest_strategy(
         residuals,
-        index_returns.loc[residuals.index],
+        aligned_index_returns,
+        aligned_benchmark_returns,
+        model,
         d=int(d),
         k=float(k),
         exit_threshold=float(exit_threshold),
