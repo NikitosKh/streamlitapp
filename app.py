@@ -789,57 +789,77 @@ elif app_mode == "Historical Backtests":
         return residuals, model, aligned_index_returns, aligned_benchmark_returns
 
     def enhanced_backtest_strategy(residuals, index_returns, benchmark_returns, model, d=10, k=0.01, exit_threshold=0.00, smoothing_span=30, initial_index_price=100):
+        # Ensure indices are datetime
         if not np.issubdtype(residuals.index.dtype, np.datetime64):
             residuals.index = pd.to_datetime(residuals.index, format='%Y%m%d')
+        
+        # Sort data
         residuals = residuals.sort_index()
         index_returns = index_returns.sort_index()
         benchmark_returns = benchmark_returns.sort_index()
+        
+        # Combine data
         combined_data = pd.concat([residuals, index_returns, benchmark_returns], axis=1, join='inner')
         combined_data.columns = ['Residuals', 'Index_Returns', 'Benchmark_Returns']
-        residuals = combined_data['Residuals'] #this one is to be remooved
-        residuals_absolute = combined_data['Residuals'] + 1
+        
+        # Re-assign variables
+        residuals = combined_data['Residuals']
         index_returns = combined_data['Index_Returns']
         benchmark_returns = combined_data['Benchmark_Returns']
-        cumulative_residuals = residuals.cumsum()  #this one has to be remooved as well
+        
+        # Correct cumulative residuals calculation
+        cumulative_residuals = residuals.cumsum()
+        
+        # Apply smoothing
         smoothed = cumulative_residuals.ewm(span=smoothing_span, adjust=False).mean()
+        
+        # Compute jumps
         jump = smoothed.diff(d).fillna(0)
-        positions = [0] * len(jump)
+        
+        # Generate positions based on jumps
+        positions = []
         holding = False
         current_position = 0
-        jump_values = jump.values
-        for i in range(len(jump_values)):
+        for jump_value in jump:
             if holding:
-                if current_position == 1 and jump_values[i] < exit_threshold:
-                    positions[i] = 0
+                if current_position == 1 and jump_value < exit_threshold:
+                    positions.append(0)
                     holding = False
                     current_position = 0
-                elif current_position == -1 and jump_values[i] > -exit_threshold:
-                    positions[i] = 0
+                elif current_position == -1 and jump_value > -exit_threshold:
+                    positions.append(0)
                     holding = False
                     current_position = 0
                 else:
-                    positions[i] = current_position
+                    positions.append(current_position)
             else:
-                if jump_values[i] > k:
-                    positions[i] = 1
+                if jump_value > k:
+                    positions.append(1)
                     holding = True
                     current_position = 1
-                elif jump_values[i] < -k:
-                    positions[i] = -1
+                elif jump_value < -k:
+                    positions.append(-1)
                     holding = True
                     current_position = -1
                 else:
-                    positions[i] = 0
+                    positions.append(0)
         position = pd.Series(positions, index=jump.index)
         position_shifted = position.shift(1).fillna(0)
+        
         # Get beta from the model
         beta = model.params[1]
         st.write(f"Beta is {beta}")
+        
         # Compute hedged returns
         hedged_return = index_returns - beta * benchmark_returns
+        
         # Compute strategy returns with beta hedging
         strategy_returns = position_shifted * hedged_return
-        cumulative_strategy_returns = strategy_returns.cumsum()
+        
+        # Correct cumulative strategy returns calculation
+        cumulative_strategy_returns = (1 + strategy_returns).cumprod() - 1
+        
+        # Compute index price series
         index_price_series = initial_index_price * (1 + index_returns).cumprod()
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
         ax1.plot(cumulative_strategy_returns.index, cumulative_strategy_returns.values, label='Strategy Cumulative Returns', color='blue')
@@ -869,6 +889,7 @@ elif app_mode == "Historical Backtests":
             annualized_return = (1 + total_return) ** (365.25 / num_days) - 1
         else:
             annualized_return = np.nan
+        
         return fig, total_return, annualized_return
 
     # Assuming saved_indices is defined elsewhere in your code
