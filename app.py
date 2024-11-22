@@ -800,7 +800,7 @@ elif app_mode == "Historical Backtests":
         residuals_absolute = combined_data['Residuals'] + 1
         index_returns = combined_data['Index_Returns']
         benchmark_returns = combined_data['Benchmark_Returns']
-        cumulative_residuals = residuals_absolute.cumprod()  #this one has to be remooved as well
+        cumulative_residuals = residuals.cumsum()  #this one has to be remooved as well
         smoothed = cumulative_residuals.ewm(span=smoothing_span, adjust=False).mean()
         jump = smoothed.diff(d).fillna(0)
         positions = [0] * len(jump)
