@@ -10,6 +10,7 @@ import os
 from datetime import datetime, timedelta
 import numpy as np
 from sklearn.linear_model import LinearRegression
+import itertools  # Supports grid search combinations
 
 st.set_page_config(
     page_title="Custom Stock Index Tracker",
@@ -17,6 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Ensure the 'saved_indices.json' file exists
 if not os.path.exists('saved_indices.json'):
     with open('saved_indices.json', 'w') as f:
         json.dump({}, f)
@@ -106,11 +108,12 @@ def find_continuous_regions(diff_mask, index):
         regions.append((start, index[-1]))
     return regions
 
-st_autorefresh(interval=3000000, key="data_refresh")
+st_autorefresh(interval=300000, key="data_refresh")
 st.title("Stock Index Tracker")
 st.sidebar.title("Navigation")
 app_mode = st.sidebar.radio("Go to", ["Summary", "Manage Indices", "View All Indices", "Historical Backtests"])
 
+# Load saved indices
 saved_indices = load_saved_indices()
 
 if app_mode == "Manage Indices":
@@ -172,7 +175,7 @@ elif app_mode == "View All Indices":
         st.info("No indices to display. Please add indices in the 'Manage Indices' section.")
     else:
         st.sidebar.subheader("Select Date Range for Daily Data")
-        start_date = st.sidebar.date_input("Start Date", datetime(2024, 10, 1))
+        start_date = st.sidebar.date_input("Start Date", datetime(2020, 1, 1))
         end_date = st.sidebar.date_input("End Date", datetime.today())
         benchmark_symbol = '^GSPC'  # S&P 500
 
@@ -391,7 +394,7 @@ elif app_mode == "View All Indices":
 
             # Daily Analysis
             if daily_data_frames:
-                st.markdown("### Daily Analysis (From October 1, 2024)")
+                st.markdown("### Daily Analysis")
                 merged_daily_df = daily_data_frames[0]
                 for df in daily_data_frames[1:]:
                     merged_daily_df = pd.merge(merged_daily_df, df, on='Date', how='inner')
@@ -635,7 +638,7 @@ elif app_mode == "Summary":
         st.info("No indices to display. Please add indices in the 'Manage Indices' section.")
     else:
         st.sidebar.subheader("Select Date Range for Summary")
-        start_date = st.sidebar.date_input("Start Date", datetime(2024, 10, 1))
+        start_date = st.sidebar.date_input("Start Date", datetime(2020, 1, 1))
         end_date = st.sidebar.date_input("End Date", datetime.today())
         benchmark_symbol = '^GSPC'  # S&P 500
 
@@ -729,14 +732,8 @@ elif app_mode == "Summary":
                     st.markdown("---")
             else:
                 st.warning(f"No daily data available for index '{index_name}'.")
-elif app_mode == "Historical Backtests":
-    import streamlit as st
-    import pandas as pd
-    import numpy as np
-    import statsmodels.api as sm
-    import matplotlib.pyplot as plt
-    from datetime import datetime
 
+elif app_mode == "Historical Backtests":
     st.header("Historical Backtests")
     st.write("This page allows you to perform historical backtesting with beta hedging.")
 
@@ -749,7 +746,7 @@ elif app_mode == "Historical Backtests":
         eq_prices.index = pd.to_datetime(eq_prices.index)
         eq_prices['EMInotChina'] = eq_prices['USEQ:IEMG'] - 0.25 * eq_prices['USEQ:MCHI']
 
-        # Standardize ticker symbols by replacing '/' with '-'
+        
         eq_prices.columns = eq_prices.columns.str.replace('/', '-', regex=False)
         return eq_prices
 
@@ -776,108 +773,154 @@ elif app_mode == "Historical Backtests":
 
     @st.cache_data
     def compute_residuals(index_returns, benchmark_returns):
-        # Align the index and benchmark returns
+        
         aligned_index_returns, aligned_benchmark_returns = index_returns.align(benchmark_returns, join='inner')
-        # Drop NaN values
+       
         aligned_data = pd.concat([aligned_index_returns, aligned_benchmark_returns], axis=1).dropna()
-        # Assign names to the series
+       
         aligned_index_returns = aligned_data.iloc[:, 0]
         aligned_index_returns.name = 'Index_Return'
         aligned_benchmark_returns = aligned_data.iloc[:, 1]
         aligned_benchmark_returns.name = 'Benchmark_Return'
 
-        # Prepare the regression variables
+        
         X = sm.add_constant(aligned_benchmark_returns)
         y = aligned_index_returns
 
-        # Fit the OLS model
         model = sm.OLS(y, X).fit()
         residuals = model.resid
         return residuals, model, aligned_index_returns, aligned_benchmark_returns
 
     def enhanced_backtest_strategy(residuals, index_returns, benchmark_returns, model, d=10, k=0.01,
-                                exit_threshold=0.00, smoothing_span=30, initial_index_price=100):
-        # Ensure indices are datetime
+                               exit_threshold=0.00, smoothing_span=30, initial_index_price=100,
+                               std_scalar=1.0, std_window=20, max_pos=1.0, increments=None):
+        if increments is None:
+            increments = [0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.05]
+        
         residuals.index = pd.to_datetime(residuals.index)
         index_returns.index = pd.to_datetime(index_returns.index)
         benchmark_returns.index = pd.to_datetime(benchmark_returns.index)
 
-        # Sort data
+        
         residuals = residuals.sort_index()
         index_returns = index_returns.sort_index()
         benchmark_returns = benchmark_returns.sort_index()
 
-        # Combine data
+        
         combined_data = pd.concat([residuals, index_returns, benchmark_returns], axis=1, join='inner')
         combined_data.columns = ['Residuals', 'Index_Returns', 'Benchmark_Returns']
 
-        # Re-assign variables
+       
         residuals = combined_data['Residuals']
         index_returns = combined_data['Index_Returns']
         benchmark_returns = combined_data['Benchmark_Returns']
 
-        # Compute cumulative residuals
+   
         cumulative_residuals = residuals.cumsum()
 
-        # Apply smoothing
+       
         smoothed = cumulative_residuals.ewm(span=smoothing_span, adjust=False).mean()
 
-        # Compute jumps
+        
         jump = smoothed.diff(d).fillna(0)
 
-        # Generate positions based on jumps
+        
+        residuals_std = residuals.rolling(window=std_window).std().fillna(method='bfill')
+        overall_residuals_std = residuals.std()
+        residuals_std.fillna(overall_residuals_std, inplace=True)
+
+        
         positions = []
-        holding = False
-        current_position = 0
+        position = 0.0
+        max_pos = float(max_pos)
+        current_increment_index = 0
+        current_decrement_index = 0
+        increments = increments  
+
+        # Iterate over time steps
         for i in range(len(jump)):
+            date = jump.index[i]
             jump_value = jump.iloc[i]
-            if holding:
-                if current_position == 1 and jump_value < exit_threshold:
-                    positions.append(0)
-                    holding = False
-                    current_position = 0
-                elif current_position == -1 and jump_value > -exit_threshold:
-                    positions.append(0)
-                    holding = False
-                    current_position = 0
-                else:
-                    positions.append(current_position)
+            residual_value = residuals.iloc[i]
+            residual_std_value = residuals_std.iloc[i]
+
+            
+            if jump_value > k:
+                entry_signal = 1 
+            elif jump_value < -k:
+                entry_signal = -1  
             else:
-                if jump_value > k:
-                    positions.append(1)
-                    holding = True
-                    current_position = 1
-                elif jump_value < -k:
-                    positions.append(-1)
-                    holding = True
-                    current_position = -1
+                entry_signal = 0  
+
+            
+            if position > 0:
+                exit_condition1 = jump_value < exit_threshold
+                exit_condition2 = residual_value < -std_scalar * residual_std_value
+                exit_signal = exit_condition1 or exit_condition2
+            elif position < 0:
+                exit_condition1 = jump_value > -exit_threshold
+                exit_condition2 = residual_value > std_scalar * residual_std_value
+                exit_signal = exit_condition1 or exit_condition2
+            else:
+                exit_signal = False
+
+            # Adjust position
+            if entry_signal != 0:
+                direction = entry_signal
+                if abs(position) < 0.1 * max_pos:
+                    
+                    position = 0.30 * max_pos * direction
+                    current_increment_index = 1  
+                    current_decrement_index = 0  
                 else:
-                    positions.append(0)
-        position = pd.Series(positions, index=jump.index)
-        position_shifted = position.shift(1).fillna(0)
+                    if current_increment_index < len(increments):
+                        position += increments[current_increment_index] * max_pos * direction
+                        current_increment_index += 1
+                    else:
+                        
+                        pass
+            elif exit_signal:
+                if abs(position) > 0:
+                    if current_decrement_index < len(increments):
+                        position -= increments[current_decrement_index] * max_pos * np.sign(position)
+                        current_decrement_index += 1
+                    else:
+                        position = 0.0
+                        current_increment_index = 0  
+                        current_decrement_index = 0
+                else:
+                    
+                    pass
+            else:
+               
+                pass
 
-        # Get beta from the model
+            
+            position = max(min(position, max_pos), -max_pos)
+
+            positions.append(position)
+
+        position_series = pd.Series(positions, index=jump.index)
+        position_shifted = position_series.shift(1).fillna(0)
+
+        
         beta = model.params['Benchmark_Return']
-        beta_0 = 0  # No intercept term
-        st.write(f"Beta is {beta}")
 
-        # Use residuals as hedged returns
+        
         hedged_return = residuals
 
-        # Compute strategy returns
         strategy_returns = position_shifted * hedged_return
 
-        # Compute cumulative strategy returns
         cumulative_strategy_returns = (1 + strategy_returns).cumprod() - 1
 
-        # Compute cumulative index returns
+        
         cumulative_index_returns = (1 + index_returns).cumprod() - 1
 
-        # Compute total returns
+        
         total_strategy_return = cumulative_strategy_returns.iloc[-1]
         total_index_return = cumulative_index_returns.iloc[-1]
 
-        # Compute annualized returns
+       
         num_days = (cumulative_strategy_returns.index[-1] - cumulative_strategy_returns.index[0]).days
         if num_days > 0:
             annualized_strategy_return = (1 + total_strategy_return) ** (365.25 / num_days) - 1
@@ -886,14 +929,9 @@ elif app_mode == "Historical Backtests":
             annualized_strategy_return = np.nan
             annualized_index_return = np.nan
 
-        
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
-        
 
-    
-
-
-        
+        # Plot cumulative strategy and index returns
         ax1.plot(cumulative_strategy_returns.index, cumulative_strategy_returns.values,
                 label='Strategy Cumulative Returns', color='blue')
         ax1.plot(cumulative_index_returns.index, cumulative_index_returns.values,
@@ -907,10 +945,13 @@ elif app_mode == "Historical Backtests":
                             f"Total Index Return: {total_index_return:.2%}",
                 transform=ax1.transAxes, verticalalignment='top')
 
-        # Plot smoothed and non-smoothed cumulative residuals and positions
+        # Plot cumulative residuals (non-smoothed) in the background
         ax2.plot(cumulative_residuals.index, cumulative_residuals.values,
                 label='Cumulative Residuals (Non-Smoothed)', color='lightblue', alpha=0.5)
+
+        # Plot smoothed cumulative residuals
         ax2.plot(smoothed.index, smoothed.values, label='Smoothed Cumulative Residuals', color='gray')
+
         ax2.set_ylabel('Cumulative Residuals')
         ax2.set_title('Cumulative Residuals and Strategy Positions')
         ax2.legend(loc='upper left')
@@ -927,11 +968,14 @@ elif app_mode == "Historical Backtests":
         return fig, total_strategy_return, annualized_strategy_return, total_index_return, annualized_index_return
 
 
-    # Assuming saved_indices is defined elsewhere in your code
+    # Load saved indices
+    saved_indices = load_saved_indices()
+
+    # Backtesting Saved Indices
     if saved_indices:
         st.subheader("Backtesting Saved Indices")
         st.sidebar.subheader("Select Date Range for Backtest")
-        start_date = st.sidebar.date_input("Start Date", datetime(2020, 1, 1))
+        start_date = st.sidebar.date_input("Start Date", datetime(2010, 1, 1))
         end_date = st.sidebar.date_input("End Date", datetime.today())
         start_date = pd.to_datetime(start_date).tz_localize(None)
         end_date = pd.to_datetime(end_date).tz_localize(None)
@@ -977,48 +1021,127 @@ elif app_mode == "Historical Backtests":
                     st.error(f"Total weight is zero for index '{index_name}'. Skipping.")
                     continue
                 adjusted_weights = [w / total_weight for w in available_weights]
+
+                
                 index_returns = compute_index_returns(eq_prices, available_symbols, adjusted_weights, start_date, end_date)
                 if index_returns.empty:
                     st.warning(f"No data available for index '{index_name}' in the selected date range.")
                     continue
 
-                # Compute residuals and model for this index
+                
                 residuals, model, aligned_index_returns, aligned_benchmark_returns = compute_residuals(index_returns, benchmark_returns)
 
                 st.subheader("Backtest Parameters")
                 d = st.number_input(f"Number of days to look back for detecting jumps (d) - {index_name}",
-                                    min_value=1, max_value=100, value=10, key=f"d_{index_name}")
+                                    min_value=1, max_value=100, value=15, step=1, key=f"d_{index_name}")
                 k = st.number_input(f"Threshold magnitude for entry signals (k) - {index_name}",
-                                    min_value=0.0, max_value=10.0, value=0.01, key=f"k_{index_name}")
+                                    min_value=0.0, max_value=0.1, value=0.005, step=0.0001, format="%.4f", key=f"k_{index_name}")
                 exit_threshold = st.number_input(f"Threshold magnitude for exit signals - {index_name}",
-                                                 min_value=0.0, max_value=10.0, value=0.00, key=f"exit_{index_name}")
+                                                 min_value=0.0, max_value=0.1, value=0.0005, step=0.0001, format="%.4f", key=f"exit_{index_name}")
                 smoothing_span = st.number_input(f"Span parameter for exponential smoothing - {index_name}",
-                                                 min_value=1, max_value=100, value=30, key=f"smoothing_{index_name}")
+                                                 min_value=1, max_value=100, value=10, step=1, key=f"smoothing_{index_name}")
                 initial_index_price = st.number_input(f"Starting price of the index - {index_name}",
-                                                      min_value=0.0, value=100.0, key=f"initial_price_{index_name}")
+                                                      min_value=0.0, value=100.0, step=1.0, key=f"initial_price_{index_name}")
 
-                fig, total_strategy_return, annualized_strategy_return, total_index_return, annualized_index_return = enhanced_backtest_strategy(
-                    residuals,
-                    aligned_index_returns,
-                    aligned_benchmark_returns,
-                    model,
-                    d=int(d),
-                    k=float(k),
-                    exit_threshold=float(exit_threshold),
-                    smoothing_span=int(smoothing_span),
-                    initial_index_price=float(initial_index_price)
-                )
-                st.pyplot(fig)
-                plt.close(fig)
+                
+                std_scalar = st.number_input(f"Scalar multiplier for standard deviation exit condition - {index_name}",
+                                             min_value=0.0, max_value=10.0, value=1.0, step=0.1, format="%.3f", key=f"std_scalar_{index_name}")
+                std_window = st.number_input(f"Window size for rolling standard deviation - {index_name}",
+                                             min_value=1, max_value=252, value=10, step=1, key=f"std_window_{index_name}")
 
-                st.write(f"**Total Strategy Return:** {total_strategy_return:.2%}")
-                st.write(f"**Approximate Annualized Strategy Return:** {annualized_strategy_return:.2%}")
-                st.write(f"**Total Index Return:** {total_index_return:.2%}")
-                st.write(f"**Approximate Annualized Index Return:** {annualized_index_return:.2%}")
+                
+                if st.button(f"Run Grid Search for {index_name}", key=f"grid_search_{index_name}"):
+                    
+                    param_grid = {
+                        'd': [5, 10, 15],
+                        'k': [0.001, 0.005, 0.01],
+                        'exit_threshold': [0.0005, 0.001, 0.005],
+                        'smoothing_span': [10, 20, 30],
+                        'std_scalar': [0.5, 1.0, 1.5],
+                        'std_window': [10, 20, 30]
+                    }
+
+                    # Generate all combinations
+                    all_combinations = list(itertools.product(
+                        param_grid['d'],
+                        param_grid['k'],
+                        param_grid['exit_threshold'],
+                        param_grid['smoothing_span'],
+                        param_grid['std_scalar'],
+                        param_grid['std_window']
+                    ))
+
+                    results = []
+                    progress_bar = st.progress(0)
+                    total_combinations = len(all_combinations)
+                    for idx, combination in enumerate(all_combinations):
+                        d_val, k_val, exit_threshold_val, smoothing_span_val, std_scalar_val, std_window_val = combination
+
+                        try:
+                            fig, total_strategy_return, annualized_strategy_return, total_index_return, annualized_index_return = enhanced_backtest_strategy(
+                                residuals,
+                                aligned_index_returns,
+                                aligned_benchmark_returns,
+                                model,
+                                d=int(d_val),
+                                k=float(k_val),
+                                exit_threshold=float(exit_threshold_val),
+                                smoothing_span=int(smoothing_span_val),
+                                initial_index_price=100.0,
+                                std_scalar=float(std_scalar_val),
+                                std_window=int(std_window_val)
+                            )
+
+                            results.append({
+                                'd': d_val,
+                                'k': k_val,
+                                'exit_threshold': exit_threshold_val,
+                                'smoothing_span': smoothing_span_val,
+                                'std_scalar': std_scalar_val,
+                                'std_window': std_window_val,
+                                'total_strategy_return': total_strategy_return,
+                                'annualized_strategy_return': annualized_strategy_return
+                            })
+                        except Exception as e:
+                            st.write(f"Error with combination {combination}: {e}")
+                            continue
+
+                        progress_bar.progress((idx + 1) / total_combinations)
+
+                    progress_bar.empty()
+
+                    
+                    results_df = pd.DataFrame(results)
+                    results_df.sort_values(by='total_strategy_return', ascending=False, inplace=True)
+
+                    st.write(f"Top 5 combinations with highest total strategy return for {index_name}:")
+                    st.table(results_df.head(5))
+                else:
+                    
+                    fig, total_strategy_return, annualized_strategy_return, total_index_return, annualized_index_return = enhanced_backtest_strategy(
+                        residuals,
+                        aligned_index_returns,
+                        aligned_benchmark_returns,
+                        model,
+                        d=int(d),
+                        k=float(k),
+                        exit_threshold=float(exit_threshold),
+                        smoothing_span=int(smoothing_span),
+                        initial_index_price=float(initial_index_price),
+                        std_scalar=float(std_scalar),
+                        std_window=int(std_window)
+                    )
+                    st.pyplot(fig)
+                    plt.close(fig)
+
+                    st.write(f"**Total Strategy Return:** {total_strategy_return:.2%}")
+                    st.write(f"**Approximate Annualized Strategy Return:** {annualized_strategy_return:.2%}")
+                    st.write(f"**Total Index Return:** {total_index_return:.2%}")
+                    st.write(f"**Approximate Annualized Index Return:** {annualized_index_return:.2%}")
     else:
         st.info("No indices saved yet. Add a new index to get started.")
 
-    # Backtesting Custom Stock Selection
+   
     st.subheader("Backtesting Custom Stock Selection")
     available_tickers = eq_prices.columns.tolist()
     subset_columns = st.multiselect(
@@ -1030,12 +1153,12 @@ elif app_mode == "Historical Backtests":
     if not selected_columns:
         st.warning("No valid stocks selected. Please select at least one stock.")
         st.stop()
-    start_date = st.sidebar.date_input("Start Date", datetime(2020, 1, 1), key="custom_start_date")
+    start_date = st.sidebar.date_input("Start Date", datetime(2010, 1, 1), key="custom_start_date")
     end_date = st.sidebar.date_input("End Date", datetime.today(), key="custom_end_date")
     start_date = pd.to_datetime(start_date).tz_localize(None)
     end_date = pd.to_datetime(end_date).tz_localize(None)
 
-    # Allow user to select benchmark tickers for custom stock selection
+    
     names = st.multiselect(
         "Select tickers for calculating beta with respect to (Benchmark):",
         options=available_tickers,
@@ -1061,12 +1184,16 @@ elif app_mode == "Historical Backtests":
     st.subheader("OLS Regression Summary")
     st.text(model.summary())
     st.subheader("Backtest Parameters")
-    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=10, key="custom_d")
-    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=0.01, key="custom_k")
-    exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=10.0, value=0.00, key="custom_exit")
-    smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=30, key="custom_smoothing")
+    d = st.number_input("Number of days to look back for detecting jumps (d)", min_value=1, max_value=100, value=15, step=1, key="custom_d")
+    k = st.number_input("Threshold magnitude for entry signals (k)", min_value=0.0, max_value=10.0, value=0.001, step=0.001, format="%.3f", key="custom_k")
+    exit_threshold = st.number_input("Threshold magnitude for exit signals", min_value=0.0, max_value=1.0, value=0.0005, step=0.0001, format="%.4f", key="custom_exit")
+    smoothing_span = st.number_input("Span parameter for exponential smoothing", min_value=1, max_value=100, value=10, step=1, key="custom_smoothing")
+    initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0, step=1.0, key="custom_initial_price")
 
-    initial_index_price = st.number_input("Starting price of the index", min_value=0.0, value=100.0, key="custom_initial_price")
+    
+    std_scalar = st.number_input("Scalar multiplier for standard deviation exit condition", min_value=0.0, max_value=10.0, value=1.0, step=0.1, format="%.3f", key="custom_std_scalar")
+    std_window = st.number_input("Window size for rolling standard deviation", min_value=1, max_value=252, value=20, step=1, key="custom_std_window")
+
     fig, total_strategy_return, annualized_strategy_return, total_index_return, annualized_index_return = enhanced_backtest_strategy(
         residuals,
         aligned_index_returns,
@@ -1076,7 +1203,9 @@ elif app_mode == "Historical Backtests":
         k=float(k),
         exit_threshold=float(exit_threshold),
         smoothing_span=int(smoothing_span),
-        initial_index_price=float(initial_index_price)
+        initial_index_price=float(initial_index_price),
+        std_scalar=float(std_scalar),
+        std_window=int(std_window)
     )
     st.pyplot(fig)
     plt.close(fig)
